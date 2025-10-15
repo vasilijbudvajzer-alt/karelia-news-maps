@@ -520,16 +520,8 @@
         MAX_NEWS_AGE: 7 * 24 * 60 * 60 * 1000
     };
 
-    let map;
-    let vectorSource;
-    let clusterSource;
-    let vectorLayer;
-    let popup;
-    let selectedCategories = new Set([
-        'politics', 'crime', 'culture', 'economy', 'sports',
-        'science', 'accidents', 'infrastructure', 'other'
-    ]);
-    let lastUpdateTime = null;
+    let map, vectorSource, clusterSource, vectorLayer, popup;
+    let selectedCategories = new Set(Object.keys(CONFIG.CATEGORY_COLORS));
     let newsData = [];
 
     function initMap() {
@@ -557,9 +549,19 @@
         popup.getElement().className = 'popup';
         map.addOverlay(popup);
 
-        map.on('click', handleMapClick);
-        map.on('pointermove', function(e) {
-            if (e.dragging) popup.setPosition(undefined);
+        map.on('click', (e) => {
+            const features = map.getFeaturesAtPixel(e.pixel);
+            if (!features || features.length === 0) {
+                popup.setPosition(undefined);
+                return;
+            }
+            const feature = features[0];
+            const props = feature.getProperties();
+            if (props.features && props.features.length === 1) {
+                showSingleNewsPopup(e.coordinate, props.features[0].get('news'));
+            } else if (props.features && props.features.length > 1) {
+                showClusterPopup(e.coordinate, props.features);
+            }
         });
     }
 
@@ -568,21 +570,20 @@
         if (size === 1) {
             const news = feature.get('features')[0].get('news');
             const color = CONFIG.CATEGORY_COLORS[news.category] || CONFIG.CATEGORY_COLORS.other;
-            // Увеличено в 3 раза: scale 0.8 → 2.4
             const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
                 <path fill="${color}" stroke="#fff" stroke-width="2" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
             </svg>`;
             return new ol.style.Style({
                 image: new ol.style.Icon({
                     src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg),
-                    scale: 2.4, // ← БЫЛО 0.8, СТАЛО 2.4 (в 3 раза больше)
+                    scale: 2.4, // ← УВЕЛИЧЕНО В 3 РАЗА
                     anchor: [0.5, 1]
                 })
             });
         } else {
             return new ol.style.Style({
                 image: new ol.style.Circle({
-                    radius: 18, // чуть больше
+                    radius: 18,
                     fill: new ol.style.Fill({color: '#4facfe'}),
                     stroke: new ol.style.Stroke({color: '#fff', width: 2})
                 }),
@@ -595,71 +596,117 @@
         }
     }
 
-    // ... остальные функции (handleMapClick, showSingleNewsPopup и т.д.) без изменений ...
+    function showSingleNewsPopup(coordinate, news) {
+        const popupContent = `
+            <div class="popup-title">${escapeHtml(news.title)}</div>
+            <div class="popup-description">${escapeHtml(truncateText(news.description, 150))}</div>
+            <div class="popup-date">${formatDate(news.pubDate)}</div>
+            <a href="${news.link}" target="_blank" class="popup-link">Читать оригинал</a>
+        `;
+        popup.getElement().innerHTML = popupContent;
+        popup.setPosition(coordinate);
+    }
 
-    // === ОБНОВЛЁННАЯ ФУНКЦИЯ ЗАГРУЗКИ ===
+    function showClusterPopup(coordinate, features) {
+        const labels = {politics:'Политика',crime:'Преступления',culture:'Культура',economy:'Экономика',sports:'Спорт',science:'Наука',accidents:'Аварии',infrastructure:'Инфраструктура',other:'Другое'};
+        let html = '<div class="cluster-list">';
+        features.forEach(f => {
+            const n = f.get('news');
+            html += `<div class="cluster-item">
+                <div class="cluster-item-title" onclick="window.open('${n.link}', '_blank')">${escapeHtml(truncateText(n.title, 60))}</div>
+                <div class="cluster-item-category">${labels[n.category]}</div>
+            </div>`;
+        });
+        html += '</div>';
+        popup.getElement().innerHTML = html;
+        popup.setPosition(coordinate);
+    }
+
+    function formatDate(s) {
+        const d = new Date(s);
+        const months = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+        return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}, ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+    }
+
+    function truncateText(text, max) {
+        return text.length <= max ? text : text.substr(0, max - 3) + '...';
+    }
+
+    function escapeHtml(text) {
+        const map = {'&':'&amp;','<':'<','>':'>','"':'&quot;',"'":'&#039;'};
+        return text.replace(/[&<>"']/g, m => map[m]);
+    }
+
+    // === КЛЮЧЕВАЯ ФУНКЦИЯ ===
     async function loadNews() {
-        showLoading(true);
+        document.getElementById('loading').style.display = 'flex';
         try {
-            const response = await fetch('/api/news');
-            if (!response.ok) throw new Error('Сервер не ответил');
-            const newsList = await response.json();
-            processNewsData(newsList);
-            updateLastUpdateTime();
-            updateCategoryCounts(newsList); // ← новая функция
-        } catch (error) {
-            console.error('Ошибка:', error);
-            alert('Не удалось загрузить новости. Попробуйте позже.');
+            const res = await fetch('/api/news?_=' + Date.now(), { cache: 'no-cache' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const newsList = await res.json();
+            console.log('📥 Получено новостей:', newsList.length);
+
+            // Очистка карты
+            vectorSource.clear();
+            newsData = [];
+            const now = Date.now();
+            for (const news of newsList) {
+                const age = now - new Date(news.pubDate).getTime();
+                if (age > CONFIG.MAX_NEWS_AGE || !selectedCategories.has(news.category)) continue;
+                const point = new ol.geom.Point(ol.proj.fromLonLat([news.lon, news.lat]));
+                vectorSource.addFeature(new ol.Feature({ geometry: point, news }));
+                newsData.push(news);
+            }
+
+            // Обновление счётчиков
+            const counts = {};
+            newsList.forEach(n => counts[n.category] = (counts[n.category] || 0) + 1);
+            document.querySelectorAll('.category-checkbox').forEach(cb => {
+                const cat = cb.dataset.category;
+                const count = counts[cat] || 0;
+                const span = cb.parentNode.querySelector('.category-label');
+                const base = span.dataset.base || span.textContent.replace(/\s*\(\d+\)$/, '');
+                if (!span.dataset.base) span.dataset.base = base;
+                span.textContent = `${base} (${count})`;
+            });
+
+            document.getElementById('lastUpdateTime').textContent = 
+                new Date().toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
+
+        } catch (err) {
+            console.error('💥 Ошибка загрузки:', err);
+            alert('Не удалось загрузить новости. Откройте DevTools → Console для деталей.');
         } finally {
-            showLoading(false);
+            document.getElementById('loading').style.display = 'none';
         }
     }
 
-    function processNewsData(newsList) {
-        vectorSource.clear();
-        newsData = [];
-        const now = Date.now();
-        for (const news of newsList) {
-            const newsDate = new Date(news.pubDate).getTime();
-            if (now - newsDate > CONFIG.MAX_NEWS_AGE) continue;
-            if (!selectedCategories.has(news.category)) continue;
-            const point = new ol.geom.Point(ol.proj.fromLonLat([news.lon, news.lat]));
-            const feature = new ol.Feature({ geometry: point, news: news });
-            vectorSource.addFeature(feature);
-            newsData.push(news);
-        }
-    }
-
-    // === НОВАЯ ФУНКЦИЯ: ОБНОВЛЕНИЕ СЧЁТЧИКОВ ===
-    function updateCategoryCounts(newsList) {
-        const counts = {};
-        newsList.forEach(n => {
-            counts[n.category] = (counts[n.category] || 0) + 1;
-        });
-
+    function setupFilters() {
         document.querySelectorAll('.category-checkbox').forEach(cb => {
-            const cat = cb.dataset.category;
-            const count = counts[cat] || 0;
-            const label = cb.nextElementSibling.nextElementSibling;
-            const text = label.textContent;
-            // Убираем старый счётчик
-            const cleanText = text.replace(/\s*\(\d+\)$/, '');
-            label.textContent = `${cleanText} (${count})`;
+            cb.addEventListener('change', () => {
+                const cat = cb.dataset.category;
+                if (cb.checked) selectedCategories.add(cat);
+                else selectedCategories.delete(cat);
+                cb.closest('.category-item').classList.toggle('active', cb.checked);
+                loadNews(); // перезагрузка с фильтром
+            });
         });
     }
 
-    // ... остальные функции без изменений ...
-
-    function initApp() {
+    function init() {
         initMap();
-        setupCategoryFilters();
-        setupUpdateButton();
-        setupInstructionsToggle();
+        setupFilters();
+        document.getElementById('updateBtn').addEventListener('click', loadNews);
+        document.getElementById('instructionsToggle').addEventListener('click', function() {
+            const content = document.getElementById('instructionsContent');
+            content.style.display = content.style.display === 'block' ? 'none' : 'block';
+            this.innerHTML = content.style.display === 'block' ? '▲ Скрыть инструкцию' : '📋 Как использовать карту';
+        });
         loadNews();
         setInterval(loadNews, CONFIG.UPDATE_INTERVAL);
     }
 
-    window.addEventListener('load', initApp);
+    window.addEventListener('load', init);
 </script>
 </body>
 </html>
