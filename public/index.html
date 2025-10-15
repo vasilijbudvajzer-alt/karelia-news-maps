@@ -502,252 +502,164 @@
 
     <script src="https://cdn.jsdelivr.net/npm/ol@v7.4.0/dist/ol.js"></script>
     <script>
-        // Конфигурация (только то, что нужно на фронтенде)
-        const CONFIG = {
-            CENTER: [33.5, 63.5],
-            ZOOM: 7,
-            CATEGORY_COLORS: {
-                politics: '#ff6b6b',
-                crime: '#ff4757',
-                culture: '#2ed573',
-                economy: '#ffa502',
-                sports: '#1e90ff',
-                science: '#9c88ff',
-                accidents: '#ff6348',
-                infrastructure: '#3742fa',
-                other: '#747d8c'
-            },
-            UPDATE_INTERVAL: 5 * 60 * 1000,
-            MAX_NEWS_AGE: 7 * 24 * 60 * 60 * 1000
-        };
+    const CONFIG = {
+        CENTER: [33.5, 63.5],
+        ZOOM: 7,
+        CATEGORY_COLORS: {
+            politics: '#ff6b6b',
+            crime: '#ff4757',
+            culture: '#2ed573',
+            economy: '#ffa502',
+            sports: '#1e90ff',
+            science: '#9c88ff',
+            accidents: '#ff6348',
+            infrastructure: '#3742fa',
+            other: '#747d8c'
+        },
+        UPDATE_INTERVAL: 5 * 60 * 1000,
+        MAX_NEWS_AGE: 7 * 24 * 60 * 60 * 1000
+    };
 
-        let map;
-        let vectorSource;
-        let clusterSource;
-        let vectorLayer;
-        let popup;
-        let selectedCategories = new Set([
-            'politics', 'crime', 'culture', 'economy', 'sports',
-            'science', 'accidents', 'infrastructure', 'other'
-        ]);
-        let lastUpdateTime = null;
-        let newsData = [];
+    let map;
+    let vectorSource;
+    let clusterSource;
+    let vectorLayer;
+    let popup;
+    let selectedCategories = new Set([
+        'politics', 'crime', 'culture', 'economy', 'sports',
+        'science', 'accidents', 'infrastructure', 'other'
+    ]);
+    let lastUpdateTime = null;
+    let newsData = [];
 
-        function initMap() {
-            vectorSource = new ol.source.Vector();
-            clusterSource = new ol.source.Cluster({ distance: 40, source: vectorSource });
-            vectorLayer = new ol.layer.Vector({ source: clusterSource, style: createClusterStyle });
+    function initMap() {
+        vectorSource = new ol.source.Vector();
+        clusterSource = new ol.source.Cluster({ distance: 40, source: vectorSource });
+        vectorLayer = new ol.layer.Vector({ source: clusterSource, style: createClusterStyle });
 
-            map = new ol.Map({
-                target: 'map',
-                layers: [
-                    new ol.layer.Tile({ source: new ol.source.OSM() }),
-                    vectorLayer
-                ],
-                view: new ol.View({
-                    center: ol.proj.fromLonLat(CONFIG.CENTER),
-                    zoom: CONFIG.ZOOM
+        map = new ol.Map({
+            target: 'map',
+            layers: [
+                new ol.layer.Tile({ source: new ol.source.OSM() }),
+                vectorLayer
+            ],
+            view: new ol.View({
+                center: ol.proj.fromLonLat(CONFIG.CENTER),
+                zoom: CONFIG.ZOOM
+            })
+        });
+
+        popup = new ol.Overlay({
+            element: document.createElement('div'),
+            positioning: 'bottom-center',
+            stopEvent: false
+        });
+        popup.getElement().className = 'popup';
+        map.addOverlay(popup);
+
+        map.on('click', handleMapClick);
+        map.on('pointermove', function(e) {
+            if (e.dragging) popup.setPosition(undefined);
+        });
+    }
+
+    function createClusterStyle(feature) {
+        const size = feature.get('features').length;
+        if (size === 1) {
+            const news = feature.get('features')[0].get('news');
+            const color = CONFIG.CATEGORY_COLORS[news.category] || CONFIG.CATEGORY_COLORS.other;
+            // Увеличено в 3 раза: scale 0.8 → 2.4
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+                <path fill="${color}" stroke="#fff" stroke-width="2" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+            </svg>`;
+            return new ol.style.Style({
+                image: new ol.style.Icon({
+                    src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg),
+                    scale: 2.4, // ← БЫЛО 0.8, СТАЛО 2.4 (в 3 раза больше)
+                    anchor: [0.5, 1]
                 })
             });
-
-            popup = new ol.Overlay({
-                element: document.createElement('div'),
-                positioning: 'bottom-center',
-                stopEvent: false
-            });
-            popup.getElement().className = 'popup';
-            map.addOverlay(popup);
-
-            map.on('click', handleMapClick);
-            map.on('pointermove', function(e) {
-                if (e.dragging) popup.setPosition(undefined);
-            });
-        }
-
-        function createClusterStyle(feature) {
-            const size = feature.get('features').length;
-            if (size === 1) {
-                const news = feature.get('features')[0].get('news');
-                const color = CONFIG.CATEGORY_COLORS[news.category] || CONFIG.CATEGORY_COLORS.other;
-                const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-                    <path fill="${color}" stroke="#fff" stroke-width="2" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
-                </svg>`;
-                return new ol.style.Style({
-                    image: new ol.style.Icon({
-                        src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg),
-                        scale: 0.8,
-                        anchor: [0.5, 1]
-                    })
-                });
-            } else {
-                return new ol.style.Style({
-                    image: new ol.style.Circle({
-                        radius: 14,
-                        fill: new ol.style.Fill({color: '#4facfe'}),
-                        stroke: new ol.style.Stroke({color: '#fff', width: 2})
-                    }),
-                    text: new ol.style.Text({
-                        text: size.toString(),
-                        fill: new ol.style.Fill({color: '#fff'}),
-                        font: 'bold 12px sans-serif'
-                    })
-                });
-            }
-        }
-
-        function handleMapClick(event) {
-            const features = map.getFeaturesAtPixel(event.pixel);
-            if (features && features.length > 0) {
-                const feature = features[0];
-                const props = feature.getProperties();
-                if (props.features && props.features.length === 1) {
-                    const news = props.features[0].get('news');
-                    showSingleNewsPopup(event.coordinate, news);
-                } else if (props.features && props.features.length > 1) {
-                    showClusterPopup(event.coordinate, props.features);
-                }
-            } else {
-                popup.setPosition(undefined);
-            }
-        }
-
-        function showSingleNewsPopup(coordinate, news) {
-            const popupContent = `
-                <div class="popup-title">${escapeHtml(news.title)}</div>
-                <div class="popup-description">${escapeHtml(truncateText(news.description, 150))}</div>
-                <div class="popup-date">${formatDate(news.pubDate)}</div>
-                <a href="${news.link}" target="_blank" class="popup-link">Читать оригинал</a>
-            `;
-            popup.getElement().innerHTML = popupContent;
-            popup.setPosition(coordinate);
-        }
-
-        function showClusterPopup(coordinate, features) {
-            let listHtml = '<div class="cluster-list">';
-            const categoryLabels = {
-                politics: 'Политика', crime: 'Преступления', culture: 'Культура',
-                economy: 'Экономика', sports: 'Спорт', science: 'Наука',
-                accidents: 'Аварии', infrastructure: 'Инфраструктура', other: 'Другое'
-            };
-            features.forEach(feature => {
-                const news = feature.get('news');
-                listHtml += `
-                    <div class="cluster-item">
-                        <div class="cluster-item-title" onclick="window.open('${news.link}', '_blank')">
-                            ${escapeHtml(truncateText(news.title, 60))}
-                        </div>
-                        <div class="cluster-item-category">${categoryLabels[news.category]}</div>
-                    </div>
-                `;
-            });
-            listHtml += '</div>';
-            popup.getElement().innerHTML = listHtml;
-            popup.setPosition(coordinate);
-        }
-
-        function formatDate(dateString) {
-            const date = new Date(dateString);
-            const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
-            return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}, ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-        }
-
-        function truncateText(text, maxLength) {
-            if (text.length <= maxLength) return text;
-            return text.substr(0, maxLength - 3) + '...';
-        }
-
-        function escapeHtml(text) {
-            const map = { '&': '&amp;', '<': '<', '>': '>', '"': '&quot;', "'": '&#039;' };
-            return text.replace(/[&<>"']/g, m => map[m]);
-        }
-
-        // === НОВАЯ ФУНКЦИЯ ЗАГРУЗКИ С СЕРВЕРА ===
-        async function loadNews() {
-            showLoading(true);
-            try {
-                const response = await fetch('/api/news');
-                if (!response.ok) throw new Error('Сервер не ответил');
-                const newsList = await response.json();
-                processNewsData(newsList);
-                updateLastUpdateTime();
-            } catch (error) {
-                console.error('Ошибка:', error);
-                alert('Не удалось загрузить новости. Попробуйте позже.');
-            } finally {
-                showLoading(false);
-            }
-        }
-
-        function processNewsData(newsList) {
-            vectorSource.clear();
-            newsData = [];
-            const now = Date.now();
-            for (const news of newsList) {
-                const newsDate = new Date(news.pubDate).getTime();
-                if (now - newsDate > CONFIG.MAX_NEWS_AGE) continue;
-                if (!selectedCategories.has(news.category)) continue;
-                const point = new ol.geom.Point(ol.proj.fromLonLat([news.lon, news.lat]));
-                const feature = new ol.Feature({ geometry: point, news: news });
-                vectorSource.addFeature(feature);
-                newsData.push(news);
-            }
-        }
-
-        function updateLastUpdateTime() {
-            const now = new Date();
-            lastUpdateTime = now;
-            document.getElementById('lastUpdateTime').textContent = 
-                `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-        }
-
-        function showLoading(show) {
-            document.getElementById('loading').style.display = show ? 'flex' : 'none';
-        }
-
-        function setupCategoryFilters() {
-            document.querySelectorAll('.category-checkbox').forEach(checkbox => {
-                checkbox.addEventListener('change', () => {
-                    const category = checkbox.dataset.category;
-                    if (checkbox.checked) {
-                        selectedCategories.add(category);
-                        checkbox.closest('.category-item').classList.add('active');
-                    } else {
-                        selectedCategories.delete(category);
-                        checkbox.closest('.category-item').classList.remove('active');
-                    }
-                    processNewsData(newsData);
-                });
+        } else {
+            return new ol.style.Style({
+                image: new ol.style.Circle({
+                    radius: 18, // чуть больше
+                    fill: new ol.style.Fill({color: '#4facfe'}),
+                    stroke: new ol.style.Stroke({color: '#fff', width: 2})
+                }),
+                text: new ol.style.Text({
+                    text: size.toString(),
+                    fill: new ol.style.Fill({color: '#fff'}),
+                    font: 'bold 14px sans-serif'
+                })
             });
         }
+    }
 
-        function setupUpdateButton() {
-            document.getElementById('updateBtn').addEventListener('click', loadNews);
+    // ... остальные функции (handleMapClick, showSingleNewsPopup и т.д.) без изменений ...
+
+    // === ОБНОВЛЁННАЯ ФУНКЦИЯ ЗАГРУЗКИ ===
+    async function loadNews() {
+        showLoading(true);
+        try {
+            const response = await fetch('/api/news');
+            if (!response.ok) throw new Error('Сервер не ответил');
+            const newsList = await response.json();
+            processNewsData(newsList);
+            updateLastUpdateTime();
+            updateCategoryCounts(newsList); // ← новая функция
+        } catch (error) {
+            console.error('Ошибка:', error);
+            alert('Не удалось загрузить новости. Попробуйте позже.');
+        } finally {
+            showLoading(false);
         }
+    }
 
-        function setupInstructionsToggle() {
-            const toggle = document.getElementById('instructionsToggle');
-            const content = document.getElementById('instructionsContent');
-            toggle.addEventListener('click', () => {
-                if (content.style.display === 'block') {
-                    content.style.display = 'none';
-                    toggle.innerHTML = '📋 Как использовать карту';
-                } else {
-                    content.style.display = 'block';
-                    toggle.innerHTML = '▲ Скрыть инструкцию';
-                }
-            });
+    function processNewsData(newsList) {
+        vectorSource.clear();
+        newsData = [];
+        const now = Date.now();
+        for (const news of newsList) {
+            const newsDate = new Date(news.pubDate).getTime();
+            if (now - newsDate > CONFIG.MAX_NEWS_AGE) continue;
+            if (!selectedCategories.has(news.category)) continue;
+            const point = new ol.geom.Point(ol.proj.fromLonLat([news.lon, news.lat]));
+            const feature = new ol.Feature({ geometry: point, news: news });
+            vectorSource.addFeature(feature);
+            newsData.push(news);
         }
+    }
 
-        function initApp() {
-            initMap();
-            setupCategoryFilters();
-            setupUpdateButton();
-            setupInstructionsToggle();
-            loadNews();
-            setInterval(loadNews, CONFIG.UPDATE_INTERVAL);
-        }
+    // === НОВАЯ ФУНКЦИЯ: ОБНОВЛЕНИЕ СЧЁТЧИКОВ ===
+    function updateCategoryCounts(newsList) {
+        const counts = {};
+        newsList.forEach(n => {
+            counts[n.category] = (counts[n.category] || 0) + 1;
+        });
 
-        window.addEventListener('load', initApp);
-    </script>
+        document.querySelectorAll('.category-checkbox').forEach(cb => {
+            const cat = cb.dataset.category;
+            const count = counts[cat] || 0;
+            const label = cb.nextElementSibling.nextElementSibling;
+            const text = label.textContent;
+            // Убираем старый счётчик
+            const cleanText = text.replace(/\s*\(\d+\)$/, '');
+            label.textContent = `${cleanText} (${count})`;
+        });
+    }
+
+    // ... остальные функции без изменений ...
+
+    function initApp() {
+        initMap();
+        setupCategoryFilters();
+        setupUpdateButton();
+        setupInstructionsToggle();
+        loadNews();
+        setInterval(loadNews, CONFIG.UPDATE_INTERVAL);
+    }
+
+    window.addEventListener('load', initApp);
+</script>
 </body>
 </html>
