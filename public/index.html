@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Интерактивная карта новостных событий Карелии</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v7.4.0/ol.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #1a2a6c, #2c3e50);
+            color: #fff;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        
+        .container {
+            display: flex;
+            height: 100vh;
+            position: relative;
+        }
+        
+        .sidebar {
+            width: 320px;
+            background: rgba(25, 35, 60, 0.9);
+            padding: 20px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+            z-index: 10;
+            overflow-y: auto;
+            backdrop-filter: blur(10px);
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .logo {
+            text-align: center;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .logo h1 {
+            font-size: 1.8rem;
+            background: linear-gradient(to right, #4facfe, #00f2fe);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 5px;
+        }
+        
+        .logo p {
+            color: #a0aec0;
+            font-size: 0.9rem;
+        }
+        
+        .controls {
+            margin-bottom: 25px;
+        }
+        
+        .control-group {
+            margin-bottom: 20px;
+        }
+        
+        .control-group h3 {
+            margin-bottom: 12px;
+            color: #4facfe;
+            font-size: 1.1rem;
+        }
+        
+        .category-filters {
+            display: grid;
+            grid-template-columns: repeat(1, 1fr);
+            gap: 8px;
+        }
+        
+        .category-item {
+            display: flex;
+            align-items: center;
+            padding: 10px 12px;
+            background: rgba(45, 55, 72, 0.7);
+            border-radius: 6px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border: 2px solid transparent;
+        }
+        
+        .category-item:hover {
+            background: rgba(79, 175, 254, 0.3);
+            border-color: rgba(79, 175, 254, 0.5);
+        }
+        
+        .category-item.active {
+            background: rgba(79, 175, 254, 0.4);
+            border-color: #4facfe;
+            box-shadow: 0 0 8px rgba(79, 175, 254, 0.4);
+        }
+        
+        .category-checkbox {
+            margin-right: 12px;
+            width: 18px;
+            height: 18px;
+            accent-color: #4facfe;
+            cursor: pointer;
+        }
+        
+        .category-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+            margin-right: 12px;
+        }
+        
+        .category-label {
+            font-size: 0.95rem;
+            text-transform: capitalize;
+            flex: 1;
+        }
+        
+        .update-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .btn {
+            padding: 12px 16px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(to right, #4facfe, #00f2fe);
+            color: #0f172a;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(79, 175, 254, 0.4);
+        }
+        
+        .last-update {
+            background: rgba(45, 55, 72, 0.7);
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            text-align: center;
+        }
+        
+        .instructions-toggle {
+            background: rgba(45, 55, 72, 0.7);
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            text-align: center;
+            cursor: pointer;
+            margin-top: 15px;
+            transition: all 0.3s ease;
+        }
+        
+        .instructions-toggle:hover {
+            background: rgba(79, 175, 254, 0.3);
+        }
+        
+        .instructions-content {
+            margin-top: 15px;
+            background: rgba(45, 55, 72, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            display: none;
+        }
+        
+        .instructions-content h3 {
+            margin-bottom: 10px;
+            color: #4facfe;
+        }
+        
+        .instructions-content ul {
+            padding-left: 20px;
+        }
+        
+        .instructions-content li {
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+        }
+        
+        .map-container {
+            flex: 1;
+            position: relative;
+        }
+        
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .info-panel {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(25, 35, 60, 0.9);
+            padding: 12px 20px;
+            border-radius: 30px;
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            z-index: 10;
+        }
+        
+        .legend {
+            display: flex;
+            gap: 15px;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+        
+        .popup {
+            background: rgba(25, 35, 60, 0.95);
+            padding: 15px;
+            border-radius: 10px;
+            max-width: 300px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .popup-title {
+            font-size: 1.1rem;
+            margin-bottom: 8px;
+            color: #4facfe;
+        }
+        
+        .popup-description {
+            font-size: 0.95rem;
+            margin-bottom: 10px;
+            line-height: 1.4;
+        }
+        
+        .popup-date {
+            font-size: 0.85rem;
+            color: #a0aec0;
+            margin-bottom: 10px;
+        }
+        
+        .popup-link {
+            display: inline-block;
+            color: #4facfe;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-bottom: 8px;
+            display: block;
+        }
+        
+        .popup-link:hover {
+            text-decoration: underline;
+        }
+        
+        .cluster-list {
+            max-height: 250px;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+        
+        .cluster-item {
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .cluster-item:last-child {
+            border-bottom: none;
+        }
+        
+        .cluster-item-title {
+            font-size: 0.95rem;
+            margin-bottom: 4px;
+            color: #4facfe;
+            cursor: pointer;
+        }
+        
+        .cluster-item-title:hover {
+            text-decoration: underline;
+        }
+        
+        .cluster-item-category {
+            font-size: 0.8rem;
+            color: #a0aec0;
+            text-transform: capitalize;
+        }
+        
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(25, 35, 60, 0.9);
+            padding: 20px 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            z-index: 20;
+        }
+        
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top: 3px solid #4facfe;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .footer {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: #a0aec0;
+            font-size: 0.8rem;
+        }
+        
+        /* Категории */
+        .politics { background-color: #ff6b6b; }
+        .crime { background-color: #ff4757; }
+        .culture { background-color: #2ed573; }
+        .economy { background-color: #ffa502; }
+        .sports { background-color: #1e90ff; }
+        .science { background-color: #9c88ff; }
+        .accidents { background-color: #ff6348; }
+        .infrastructure { background-color: #3742fa; }
+        .other { background-color: #747d8c; }
+        
+        /* Адаптивность */
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+            
+            .sidebar {
+                width: 100%;
+                height: auto;
+                max-height: 40vh;
+                border-right: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            }
+            
+            .info-panel {
+                bottom: 80px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <div class="logo">
+                <h1>Карелия Новости</h1>
+                <p>Интерактивная карта событий в реальном времени</p>
+            </div>
+            
+            <div class="controls">
+                <div class="control-group">
+                    <h3>Фильтры по категориям</h3>
+                    <div class="category-filters">
+                        <label class="category-item active">
+                            <input type="checkbox" class="category-checkbox" data-category="politics" checked>
+                            <div class="category-color politics"></div>
+                            <span class="category-label">Политика</span>
+                        </label>
+                        <label class="category-item active">
+                            <input type="checkbox" class="category-checkbox" data-category="crime" checked>
+                            <div class="category-color crime"></div>
+                            <span class="category-label">Преступления</span>
+                        </label>
+                        <label class="category-item active">
+                            <input type="checkbox" class="category-checkbox" data-category="culture" checked>
+                            <div class="category-color culture"></div>
+                            <span class="category-label">Культура</span>
+                        </label>
+                        <label class="category-item active">
+                            <input type="checkbox" class="category-checkbox" data-category="economy" checked>
+                            <div class="category-color economy"></div>
+                            <span class="category-label">Экономика</span>
+                        </label>
+                        <label class="category-item active">
+                            <input type="checkbox" class="category-checkbox" data-category="sports" checked>
+                            <div class="category-color sports"></div>
+                            <span class="category-label">Спорт</span>
+                        </label>
+                        <label class="category-item active">
+                            <input type="checkbox" class="category-checkbox" data-category="science" checked>
+                            <div class="category-color science"></div>
+                            <span class="category-label">Наука</span>
+                        </label>
+                        <label class="category-item active">
+                            <input type="checkbox" class="category-checkbox" data-category="accidents" checked>
+                            <div class="category-color accidents"></div>
+                            <span class="category-label">Аварии</span>
+                        </label>
+                        <label class="category-item active">
+                            <input type="checkbox" class="category-checkbox" data-category="infrastructure" checked>
+                            <div class="category-color infrastructure"></div>
+                            <span class="category-label">Инфраструктура</span>
+                        </label>
+                        <label class="category-item active">
+                            <input type="checkbox" class="category-checkbox" data-category="other" checked>
+                            <div class="category-color other"></div>
+                            <span class="category-label">Другое</span>
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="control-group">
+                    <h3>Управление</h3>
+                    <div class="update-controls">
+                        <button id="updateBtn" class="btn btn-primary">
+                            <span>Обновить сейчас</span>
+                        </button>
+                        <div class="last-update">
+                            Последнее обновление: <span id="lastUpdateTime">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="instructions-toggle" id="instructionsToggle">
+                📋 Как использовать карту
+            </div>
+            <div class="instructions-content" id="instructionsContent">
+                <h3>Инструкция по использованию</h3>
+                <ul>
+                    <li>Кликните по метке для просмотра новости</li>
+                    <li>Используйте фильтры для отображения интересующих категорий</li>
+                    <li>Карта автоматически обновляется каждые 5 минут</li>
+                    <li>Новости старше 7 дней не отображаются</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="map-container">
+            <div id="map"></div>
+            
+            <div class="info-panel">
+                <div class="legend">
+                    <div class="legend-item">
+                        <div class="legend-color politics"></div>
+                        <span>Политика</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color crime"></div>
+                        <span>Преступления</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color culture"></div>
+                        <span>Культура</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color economy"></div>
+                        <span>Экономика</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="footer">
+                Источники: karelia.news, petrozavodsk.info, karelinform.ru
+            </div>
+        </div>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <span>Загрузка новостей...</span>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/ol@v7.4.0/dist/ol.js"></script>
+    <script>
+        // Конфигурация (только то, что нужно на фронтенде)
+        const CONFIG = {
+            CENTER: [33.5, 63.5],
+            ZOOM: 7,
+            CATEGORY_COLORS: {
+                politics: '#ff6b6b',
+                crime: '#ff4757',
+                culture: '#2ed573',
+                economy: '#ffa502',
+                sports: '#1e90ff',
+                science: '#9c88ff',
+                accidents: '#ff6348',
+                infrastructure: '#3742fa',
+                other: '#747d8c'
+            },
+            UPDATE_INTERVAL: 5 * 60 * 1000,
+            MAX_NEWS_AGE: 7 * 24 * 60 * 60 * 1000
+        };
+
+        let map;
+        let vectorSource;
+        let clusterSource;
+        let vectorLayer;
+        let popup;
+        let selectedCategories = new Set([
+            'politics', 'crime', 'culture', 'economy', 'sports',
+            'science', 'accidents', 'infrastructure', 'other'
+        ]);
+        let lastUpdateTime = null;
+        let newsData = [];
+
+        function initMap() {
+            vectorSource = new ol.source.Vector();
+            clusterSource = new ol.source.Cluster({ distance: 40, source: vectorSource });
+            vectorLayer = new ol.layer.Vector({ source: clusterSource, style: createClusterStyle });
+
+            map = new ol.Map({
+                target: 'map',
+                layers: [
+                    new ol.layer.Tile({ source: new ol.source.OSM() }),
+                    vectorLayer
+                ],
+                view: new ol.View({
+                    center: ol.proj.fromLonLat(CONFIG.CENTER),
+                    zoom: CONFIG.ZOOM
+                })
+            });
+
+            popup = new ol.Overlay({
+                element: document.createElement('div'),
+                positioning: 'bottom-center',
+                stopEvent: false
+            });
+            popup.getElement().className = 'popup';
+            map.addOverlay(popup);
+
+            map.on('click', handleMapClick);
+            map.on('pointermove', function(e) {
+                if (e.dragging) popup.setPosition(undefined);
+            });
+        }
+
+        function createClusterStyle(feature) {
+            const size = feature.get('features').length;
+            if (size === 1) {
+                const news = feature.get('features')[0].get('news');
+                const color = CONFIG.CATEGORY_COLORS[news.category] || CONFIG.CATEGORY_COLORS.other;
+                const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+                    <path fill="${color}" stroke="#fff" stroke-width="2" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                </svg>`;
+                return new ol.style.Style({
+                    image: new ol.style.Icon({
+                        src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg),
+                        scale: 0.8,
+                        anchor: [0.5, 1]
+                    })
+                });
+            } else {
+                return new ol.style.Style({
+                    image: new ol.style.Circle({
+                        radius: 14,
+                        fill: new ol.style.Fill({color: '#4facfe'}),
+                        stroke: new ol.style.Stroke({color: '#fff', width: 2})
+                    }),
+                    text: new ol.style.Text({
+                        text: size.toString(),
+                        fill: new ol.style.Fill({color: '#fff'}),
+                        font: 'bold 12px sans-serif'
+                    })
+                });
+            }
+        }
+
+        function handleMapClick(event) {
+            const features = map.getFeaturesAtPixel(event.pixel);
+            if (features && features.length > 0) {
+                const feature = features[0];
+                const props = feature.getProperties();
+                if (props.features && props.features.length === 1) {
+                    const news = props.features[0].get('news');
+                    showSingleNewsPopup(event.coordinate, news);
+                } else if (props.features && props.features.length > 1) {
+                    showClusterPopup(event.coordinate, props.features);
+                }
+            } else {
+                popup.setPosition(undefined);
+            }
+        }
+
+        function showSingleNewsPopup(coordinate, news) {
+            const popupContent = `
+                <div class="popup-title">${escapeHtml(news.title)}</div>
+                <div class="popup-description">${escapeHtml(truncateText(news.description, 150))}</div>
+                <div class="popup-date">${formatDate(news.pubDate)}</div>
+                <a href="${news.link}" target="_blank" class="popup-link">Читать оригинал</a>
+            `;
+            popup.getElement().innerHTML = popupContent;
+            popup.setPosition(coordinate);
+        }
+
+        function showClusterPopup(coordinate, features) {
+            let listHtml = '<div class="cluster-list">';
+            const categoryLabels = {
+                politics: 'Политика', crime: 'Преступления', culture: 'Культура',
+                economy: 'Экономика', sports: 'Спорт', science: 'Наука',
+                accidents: 'Аварии', infrastructure: 'Инфраструктура', other: 'Другое'
+            };
+            features.forEach(feature => {
+                const news = feature.get('news');
+                listHtml += `
+                    <div class="cluster-item">
+                        <div class="cluster-item-title" onclick="window.open('${news.link}', '_blank')">
+                            ${escapeHtml(truncateText(news.title, 60))}
+                        </div>
+                        <div class="cluster-item-category">${categoryLabels[news.category]}</div>
+                    </div>
+                `;
+            });
+            listHtml += '</div>';
+            popup.getElement().innerHTML = listHtml;
+            popup.setPosition(coordinate);
+        }
+
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+            return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}, ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+        }
+
+        function truncateText(text, maxLength) {
+            if (text.length <= maxLength) return text;
+            return text.substr(0, maxLength - 3) + '...';
+        }
+
+        function escapeHtml(text) {
+            const map = { '&': '&amp;', '<': '<', '>': '>', '"': '&quot;', "'": '&#039;' };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+
+        // === НОВАЯ ФУНКЦИЯ ЗАГРУЗКИ С СЕРВЕРА ===
+        async function loadNews() {
+            showLoading(true);
+            try {
+                const response = await fetch('/api/news');
+                if (!response.ok) throw new Error('Сервер не ответил');
+                const newsList = await response.json();
+                processNewsData(newsList);
+                updateLastUpdateTime();
+            } catch (error) {
+                console.error('Ошибка:', error);
+                alert('Не удалось загрузить новости. Попробуйте позже.');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function processNewsData(newsList) {
+            vectorSource.clear();
+            newsData = [];
+            const now = Date.now();
+            for (const news of newsList) {
+                const newsDate = new Date(news.pubDate).getTime();
+                if (now - newsDate > CONFIG.MAX_NEWS_AGE) continue;
+                if (!selectedCategories.has(news.category)) continue;
+                const point = new ol.geom.Point(ol.proj.fromLonLat([news.lon, news.lat]));
+                const feature = new ol.Feature({ geometry: point, news: news });
+                vectorSource.addFeature(feature);
+                newsData.push(news);
+            }
+        }
+
+        function updateLastUpdateTime() {
+            const now = new Date();
+            lastUpdateTime = now;
+            document.getElementById('lastUpdateTime').textContent = 
+                `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'flex' : 'none';
+        }
+
+        function setupCategoryFilters() {
+            document.querySelectorAll('.category-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', () => {
+                    const category = checkbox.dataset.category;
+                    if (checkbox.checked) {
+                        selectedCategories.add(category);
+                        checkbox.closest('.category-item').classList.add('active');
+                    } else {
+                        selectedCategories.delete(category);
+                        checkbox.closest('.category-item').classList.remove('active');
+                    }
+                    processNewsData(newsData);
+                });
+            });
+        }
+
+        function setupUpdateButton() {
+            document.getElementById('updateBtn').addEventListener('click', loadNews);
+        }
+
+        function setupInstructionsToggle() {
+            const toggle = document.getElementById('instructionsToggle');
+            const content = document.getElementById('instructionsContent');
+            toggle.addEventListener('click', () => {
+                if (content.style.display === 'block') {
+                    content.style.display = 'none';
+                    toggle.innerHTML = '📋 Как использовать карту';
+                } else {
+                    content.style.display = 'block';
+                    toggle.innerHTML = '▲ Скрыть инструкцию';
+                }
+            });
+        }
+
+        function initApp() {
+            initMap();
+            setupCategoryFilters();
+            setupUpdateButton();
+            setupInstructionsToggle();
+            loadNews();
+            setInterval(loadNews, CONFIG.UPDATE_INTERVAL);
+        }
+
+        window.addEventListener('load', initApp);
+    </script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "karelia-news-map",
+  "version": "1.0.0",
+  "description": "Интерактивная карта новостей Карелии",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "rss-parser": "^3.13.0",
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
