@@ -492,226 +492,312 @@
 
     <script src="https://cdn.jsdelivr.net/npm/ol@v7.4.0/dist/ol.js"></script>
     <script>
-        const CONFIG = {
-            CENTER: [33.5, 63.5],
-            ZOOM: 7,
-            CATEGORY_COLORS: {
-                politics: '#ff6b6b',
-                crime: '#ff4757',
-                culture: '#2ed573',
-                economy: '#ffa502',
-                sports: '#1e90ff',
-                science: '#9c88ff',
-                accidents: '#ff6348',
-                infrastructure: '#3742fa',
-                other: '#747d8c'
-            },
-            UPDATE_INTERVAL: 5 * 60 * 1000,
-            MAX_NEWS_AGE: 7 * 24 * 60 * 60 * 1000
-        };
+const CONFIG = {
+  CENTER: [33.5, 63.5],
+  ZOOM: 7,
+  CATEGORY_COLORS: {
+    politics: '#ff6b6b',
+    crime: '#ff4757',
+    culture: '#2ed573',
+    economy: '#ffa502',
+    sports: '#1e90ff',
+    science: '#9c88ff',
+    accidents: '#ff6348',
+    infrastructure: '#3742fa',
+    other: '#747d8c'
+  },
+  UPDATE_INTERVAL: 5 * 60 * 1000,
+  MAX_NEWS_AGE: 7 * 24 * 60 * 60 * 1000
+};
 
-        let map, vectorSource, clusterSource, vectorLayer, popup;
-        let selectedCategories = new Set(Object.keys(CONFIG.CATEGORY_COLORS));
-        let newsData = [];
+let map, vectorSource, clusterSource, vectorLayer, popup;
+let selectedCategories = new Set(Object.keys(CONFIG.CATEGORY_COLORS));
+let allNewsData = [];
 
-        function initMap() {
-            vectorSource = new ol.source.Vector();
-            clusterSource = new ol.source.Cluster({ distance: 40, source: vectorSource });
-            vectorLayer = new ol.layer.Vector({ source: clusterSource, style: createClusterStyle });
+// === ИНИЦИАЛИЗАЦИЯ КАРТЫ ===
+function initMap() {
+  vectorSource = new ol.source.Vector();
+  clusterSource = new ol.source.Cluster({ distance: 40, source: vectorSource });
+  vectorLayer = new ol.layer.Vector({ source: clusterSource, style: createClusterStyle });
 
-            map = new ol.Map({
-                target: 'map',
-                layers: [
-                    new ol.layer.Tile({ source: new ol.source.OSM() }),
-                    vectorLayer
-                ],
-                view: new ol.View({
-                    center: ol.proj.fromLonLat(CONFIG.CENTER),
-                    zoom: CONFIG.ZOOM
-                })
-            });
+  map = new ol.Map({
+    target: 'map',
+    layers: [
+      new ol.layer.Tile({ source: new ol.source.OSM() }),
+      vectorLayer
+    ],
+    view: new ol.View({
+      center: ol.proj.fromLonLat(CONFIG.CENTER),
+      zoom: CONFIG.ZOOM
+    })
+  });
 
-            popup = new ol.Overlay({
-                element: document.createElement('div'),
-                positioning: 'bottom-center',
-                stopEvent: false
-            });
-            popup.getElement().className = 'popup';
-            map.addOverlay(popup);
+  // Попап
+  popup = new ol.Overlay({
+    element: document.createElement('div'),
+    positioning: 'bottom-center',
+    stopEvent: true // ← ВАЖНО: останавливает события мыши
+  });
+  popup.getElement().className = 'popup';
+  map.addOverlay(popup);
 
-            map.on('click', (e) => {
-                const features = map.getFeaturesAtPixel(e.pixel);
-                if (!features || features.length === 0) {
-                    popup.setPosition(undefined);
-                    return;
-                }
-                const feature = features[0];
-                const props = feature.getProperties();
-                if (props.features && props.features.length === 1) {
-                    showSingleNewsPopup(e.coordinate, props.features[0].get('news'));
-                } else if (props.features && props.features.length > 1) {
-                    showClusterPopup(e.coordinate, props.features);
-                }
-            });
-        }
+  // Клик по карте
+  map.on('click', handleMapClick);
 
-        function createClusterStyle(feature) {
-            const size = feature.get('features').length;
-            if (size === 1) {
-                const news = feature.get('features')[0].get('news');
-                const color = CONFIG.CATEGORY_COLORS[news.category] || CONFIG.CATEGORY_COLORS.other;
-                const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-                    <path fill="${color}" stroke="#fff" stroke-width="2" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
-                </svg>`;
-                return new ol.style.Style({
-                    image: new ol.style.Icon({
-                        src: 'image/svg+xml;charset=utf-8,' + encodeURIComponent(svg),
-                        scale: 2.4, // ← УВЕЛИЧЕНО В 3 РАЗА
-                        anchor: [0.5, 1]
-                    })
-                });
-            } else {
-                return new ol.style.Style({
-                    image: new ol.style.Circle({
-                        radius: 18,
-                        fill: new ol.style.Fill({color: '#4facfe'}),
-                        stroke: new ol.style.Stroke({color: '#fff', width: 2})
-                    }),
-                    text: new ol.style.Text({
-                        text: size.toString(),
-                        fill: new ol.style.Fill({color: '#fff'}),
-                        font: 'bold 14px sans-serif'
-                    })
-                });
-            }
-        }
+  // Отключить прокрутку карты, если курсор над попапом
+  const popupEl = popup.getElement();
+  popupEl.addEventListener('mouseenter', () => map.getInteractions().forEach(i => i.setActive(false)));
+  popupEl.addEventListener('mouseleave', () => map.getInteractions().forEach(i => i.setActive(true)));
+}
 
-        function showSingleNewsPopup(coordinate, news) {
-            const popupContent = `
-                <div class="popup-title">${escapeHtml(news.title)}</div>
-                <div class="popup-description">${escapeHtml(truncateText(news.description, 150))}</div>
-                <div class="popup-date">${formatDate(news.pubDate)}</div>
-                <a href="${news.link}" target="_blank" class="popup-link">Читать оригинал</a>
-            `;
-            popup.getElement().innerHTML = popupContent;
-            popup.setPosition(coordinate);
-        }
+// === СТИЛЬ: ПИРОГ ДЛЯ КЛАСТЕРОВ ===
+function createClusterStyle(feature) {
+  const features = feature.get('features');
+  const size = features.length;
 
-        function showClusterPopup(coordinate, features) {
-            const labels = {politics:'Политика',crime:'Преступления',culture:'Культура',economy:'Экономика',sports:'Спорт',science:'Наука',accidents:'Аварии',infrastructure:'Инфраструктура',other:'Другое'};
-            let html = '<div class="cluster-list">';
-            features.forEach(f => {
-                const n = f.get('news');
-                html += `<div class="cluster-item">
-                    <div class="cluster-item-title" onclick="window.open('${n.link}', '_blank')">${escapeHtml(truncateText(n.title, 60))}</div>
-                    <div class="cluster-item-category">${labels[n.category]}</div>
-                </div>`;
-            });
-            html += '</div>';
-            popup.getElement().innerHTML = html;
-            popup.setPosition(coordinate);
-        }
+  if (size === 1) {
+    // Одиночная метка — цветной круг
+    const news = features[0].get('news');
+    const color = CONFIG.CATEGORY_COLORS[news.category] || CONFIG.CATEGORY_COLORS.other;
+    return new ol.style.Style({
+      image: new ol.style.Circle({
+        radius: 8,
+        fill: new ol.style.Fill({ color: color }),
+        stroke: new ol.style.Stroke({ color: '#fff', width: 2 })
+      })
+    });
+  }
 
-        function formatDate(s) {
-            const d = new Date(s);
-            const months = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
-            return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}, ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
-        }
+  // Кластер — пирог
+  const counts = {};
+  features.forEach(f => {
+    const cat = f.get('news').category;
+    counts[cat] = (counts[cat] || 0) + 1;
+  });
 
-        function truncateText(text, max) {
-            return text.length <= max ? text : text.substr(0, max - 3) + '...';
-        }
+  const total = size;
+  let startAngle = 0;
+  const canvas = document.createElement('canvas');
+  const sizePx = 32;
+  canvas.width = sizePx;
+  canvas.height = sizePx;
+  const ctx = canvas.getContext('2d');
 
-        function escapeHtml(text) {
-            const map = {'&':'&amp;','<':'<','>':'>','"':'&quot;',"'":'&#039;'};
-            return text.replace(/[&<>"']/g, m => map[m]);
-        }
+  // Рисуем сегменты
+  for (const [cat, count] of Object.entries(counts)) {
+    const angle = (count / total) * 2 * Math.PI;
+    ctx.beginPath();
+    ctx.moveTo(sizePx / 2, sizePx / 2);
+    ctx.arc(sizePx / 2, sizePx / 2, sizePx / 2, startAngle, startAngle + angle);
+    ctx.closePath();
+    ctx.fillStyle = CONFIG.CATEGORY_COLORS[cat] || CONFIG.CATEGORY_COLORS.other;
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    startAngle += angle;
+  }
 
-        async function loadNews() {
-            document.getElementById('loading').style.display = 'flex';
-            try {
-                const res = await fetch('/api/news?_=' + Date.now(), { cache: 'no-cache' });
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const newsList = await res.json();
-                console.log('📥 Получено новостей:', newsList.length);
+  // Цифра в центре
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(size.toString(), sizePx / 2, sizePx / 2);
 
-                vectorSource.clear();
-                newsData = [];
-                const now = Date.now();
-                for (const news of newsList) {
-                    const age = now - new Date(news.pubDate).getTime();
-                    if (age > CONFIG.MAX_NEWS_AGE || !selectedCategories.has(news.category)) continue;
-                    const point = new ol.geom.Point(ol.proj.fromLonLat([news.lon, news.lat]));
-                    vectorSource.addFeature(new ol.Feature({ geometry: point, news }));
-                    newsData.push(news);
-                }
+  return new ol.style.Style({
+    image: new ol.style.Icon({
+      img: canvas,
+      imgSize: [sizePx, sizePx],
+      scale: 1
+    })
+  });
+}
 
-                // Обновление счётчиков
-                const counts = {};
-                newsList.forEach(n => counts[n.category] = (counts[n.category] || 0) + 1);
-                document.querySelectorAll('.category-item').forEach(item => {
-                    const cat = item.dataset.category;
-                    const countEl = item.querySelector('.count');
-                    if (countEl) countEl.textContent = counts[cat] || 0;
-                });
+// === ОБРАБОТКА КЛИКА ===
+function handleMapClick(event) {
+  const features = map.getFeaturesAtPixel(event.pixel);
+  if (!features || features.length === 0) {
+    popup.setPosition(undefined);
+    return;
+  }
 
-                document.getElementById('lastUpdateTime').textContent = 
-                    new Date().toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
+  const feature = features[0];
+  const props = feature.getProperties();
 
-            } catch (err) {
-                console.error('💥 Ошибка загрузки:', err);
-                alert('Не удалось загрузить новости. Откройте DevTools → Console для деталей.');
-            } finally {
-                document.getElementById('loading').style.display = 'none';
-            }
-        }
+  if (props.features && props.features.length === 1) {
+    const news = props.features[0].get('news');
+    showSingleNewsPopup(event.coordinate, news);
+  } else if (props.features && props.features.length > 1) {
+    showClusterPopup(event.coordinate, props.features);
+  }
+}
 
-        function setupCategoryFilters() {
-            document.getElementById('selectAllCategories').addEventListener('change', function() {
-                const value = this.value;
-                document.querySelectorAll('.category-item').forEach(item => {
-                    const cat = item.dataset.category;
-                    if (value === 'all') {
-                        selectedCategories.add(cat);
-                        item.classList.add('active');
-                    } else {
-                        selectedCategories.delete(cat);
-                        item.classList.remove('active');
-                    }
-                });
-                loadNews();
-                this.selectedIndex = 0;
-            });
+// === ПОПАПЫ ===
+function showSingleNewsPopup(coordinate, news) {
+  const popupContent = `
+    <div class="popup-title">${escapeHtml(news.title)}</div>
+    <div class="popup-description">${escapeHtml(truncateText(news.description, 150))}</div>
+    <div class="popup-date">${formatDate(news.pubDate)}</div>
+    <a href="${news.link}" target="_blank" class="popup-link">Читать оригинал</a>
+  `;
+  popup.getElement().innerHTML = popupContent;
+  popup.setPosition(coordinate);
+}
 
-            document.querySelectorAll('.category-item').forEach(item => {
-                item.addEventListener('click', () => {
-                    const cat = item.dataset.category;
-                    if (selectedCategories.has(cat)) {
-                        selectedCategories.delete(cat);
-                        item.classList.remove('active');
-                    } else {
-                        selectedCategories.add(cat);
-                        item.classList.add('active');
-                    }
-                    loadNews();
-                });
-            });
-        }
+function showClusterPopup(coordinate, features) {
+  const labels = {politics:'Политика',crime:'Преступления',culture:'Культура',economy:'Экономика',sports:'Спорт',science:'Наука',accidents:'Аварии',infrastructure:'Инфраструктура',other:'Другое'};
+  let html = '<div class="cluster-list">';
+  features.forEach(f => {
+    const n = f.get('news');
+    html += `<div class="cluster-item">
+      <div class="cluster-item-title" onclick="window.open('${n.link}', '_blank')">${escapeHtml(truncateText(n.title, 60))}</div>
+      <div class="cluster-item-category">${labels[n.category]}</div>
+    </div>`;
+  });
+  html += '</div>';
+  popup.getElement().innerHTML = html;
+  popup.setPosition(coordinate);
+}
 
-        function init() {
-            initMap();
-            setupCategoryFilters();
-            document.getElementById('updateBtn').addEventListener('click', loadNews);
-            document.getElementById('instructionsToggle').addEventListener('click', function() {
-                const content = document.getElementById('instructionsContent');
-                content.style.display = content.style.display === 'block' ? 'none' : 'block';
-                this.innerHTML = content.style.display === 'block' ? '▲ Скрыть инструкцию' : '📋 Как использовать карту';
-            });
-            loadNews();
-            setInterval(loadNews, CONFIG.UPDATE_INTERVAL);
-        }
+// === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
+function formatDate(s) {
+  const d = new Date(s);
+  const months = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+  return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}, ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+}
+function truncateText(text, max) { return text.length <= max ? text : text.substr(0, max - 3) + '...'; }
+function escapeHtml(text) {
+  const map = {'&':'&amp;','<':'<','>':'>','"':'&quot;',"'":'&#039;'};
+  return text.replace(/[&<>"']/g, m => map[m]);
+}
 
-        window.addEventListener('load', init);
-    </script>
+// === ЗАГРУЗКА НОВОСТЕЙ ===
+async function loadNews() {
+  document.getElementById('loading').style.display = 'flex';
+  try {
+    const res = await fetch('/api/news?_=' + Date.now());
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const newsList = await res.json();
+    allNewsData = newsList;
+
+    // Обновить карту
+    vectorSource.clear();
+    const now = Date.now();
+    for (const news of newsList) {
+      const age = now - new Date(news.pubDate).getTime();
+      if (age > CONFIG.MAX_NEWS_AGE || !selectedCategories.has(news.category)) continue;
+      const point = new ol.geom.Point(ol.proj.fromLonLat([news.lon, news.lat]));
+      vectorSource.addFeature(new ol.Feature({ geometry: point, news }));
+    }
+
+    // Обновить фильтры (только видимые категории)
+    updateCategoryFilters(newsList);
+
+    document.getElementById('lastUpdateTime').textContent = 
+      new Date().toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
+
+  } catch (err) {
+    console.error('Ошибка загрузки:', err);
+    alert('Не удалось загрузить новости.');
+  } finally {
+    document.getElementById('loading').style.display = 'none';
+  }
+}
+
+// === ОБНОВЛЕНИЕ ФИЛЬТРОВ (ТОЛЬКО ВИДИМЫЕ КАТЕГОРИИ) ===
+function updateCategoryFilters(newsList) {
+  const visibleCategories = new Set();
+  const now = Date.now();
+  newsList.forEach(n => {
+    const age = now - new Date(n.pubDate).getTime();
+    if (age <= CONFIG.MAX_NEWS_AGE) visibleCategories.add(n.category);
+  });
+
+  const container = document.querySelector('.category-filters');
+  container.innerHTML = `
+    <div style="margin-bottom: 12px;">
+      <select id="selectAllCategories" class="btn" style="width:100%; padding:10px; background:#4facfe; color:#0f172a;">
+        <option value="all">✅ Включить все</option>
+        <option value="none">❌ Выключить все</option>
+      </select>
+    </div>
+  `;
+
+  // Только категории, которые есть в данных
+  const categoryLabels = {
+    politics: 'Политика', crime: 'Преступления', culture: 'Культура',
+    economy: 'Экономика', sports: 'Спорт', science: 'Наука',
+    accidents: 'Аварии', infrastructure: 'Инфраструктура', other: 'Другое'
+  };
+
+  visibleCategories.forEach(cat => {
+    const isActive = selectedCategories.has(cat);
+    const colorClass = cat;
+    const label = categoryLabels[cat] || cat;
+    const count = newsList.filter(n => n.category === cat).length;
+
+    const el = document.createElement('div');
+    el.className = `category-item ${isActive ? 'active' : ''}`;
+    el.dataset.category = cat;
+    el.innerHTML = `
+      <div class="category-color ${colorClass}"></div>
+      <span class="category-label">${label} (${count})</span>
+    `;
+    container.appendChild(el);
+  });
+
+  // Повторно навесить обработчики
+  setupCategoryFilters();
+}
+
+// === НАСТРОЙКА ФИЛЬТРОВ ===
+function setupCategoryFilters() {
+  document.getElementById('selectAllCategories')?.addEventListener('change', function() {
+    const value = this.value;
+    document.querySelectorAll('.category-item').forEach(item => {
+      const cat = item.dataset.category;
+      if (value === 'all') {
+        selectedCategories.add(cat);
+        item.classList.add('active');
+      } else {
+        selectedCategories.delete(cat);
+        item.classList.remove('active');
+      }
+    });
+    loadNews();
+    this.selectedIndex = 0;
+  });
+
+  document.querySelectorAll('.category-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const cat = item.dataset.category;
+      if (selectedCategories.has(cat)) {
+        selectedCategories.delete(cat);
+        item.classList.remove('active');
+      } else {
+        selectedCategories.add(cat);
+        item.classList.add('active');
+      }
+      loadNews();
+    });
+  });
+}
+
+// === ИНИЦИАЛИЗАЦИЯ ===
+function init() {
+  initMap();
+  document.getElementById('updateBtn').addEventListener('click', loadNews);
+  document.getElementById('instructionsToggle').addEventListener('click', function() {
+    const content = document.getElementById('instructionsContent');
+    content.style.display = content.style.display === 'block' ? 'none' : 'block';
+    this.innerHTML = content.style.display === 'block' ? '▲ Скрыть инструкцию' : '📋 Как использовать карту';
+  });
+  loadNews();
+  setInterval(loadNews, CONFIG.UPDATE_INTERVAL);
+}
+
+window.addEventListener('load', init);
+</script>
 </body>
 </html>
