@@ -1,27 +1,35 @@
 const Parser = require('rss-parser');
 const axios = require('axios');
+const cheerio = require('cheerio');
 
-// === ИСТОЧНИКИ: местные + федеральные с фильтрацией ===
+// === RSS-источники ===
 const RSS_SOURCES = [
-  // Местные
- 'https://karelia.info/rss/',
   'https://karelia.news/rss',
-  'https://petrozavodsk.info/rss/',
-  'https://karelinform.ru/rss.xml',
-  'https://petrimedia.ru/export/rss2/news/index.xml',
-  'https://government.karelia.ru/press/news/rss/',
-  'https://segezha.info/rss/'
-  // Федеральные (будут фильтроваться по ключевым словам)
   'https://ria.ru/export/rss2/archive/index.xml',
   'https://tass.ru/rss/v2.xml',
-  'https://lenta.ru/rss/'
+  'https://www.bezformata.com/rss/region/10',
+  'https://tv-karelia.ru/feed/',
+  'https://rk.karelia.ru/feed/'
 ];
 
-// Ключевые слова для фильтрации федеральных новостей
+// === HTML-сайты (fallback) ===
+const HTML_SOURCES = [
+  { url: 'https://ptzgovorit.ru/', name: 'ptzgovorit' },
+  { url: 'https://karelinform.ru/', name: 'karelinform' }
+];
+
+// === Telegram-каналы (публичные архивы) ===
+const TELEGRAM_SOURCES = [
+  { url: 'https://t.me/s/gorodskoyadmin', name: 'gorodskoyadmin' },
+  { url: 'https://t.me/s/tvojakarelia', name: 'tvojakarelia' },
+  { url: 'https://t.me/s/novostikarelia', name: 'novostikarelia' }
+];
+
+// === Ключевые слова для фильтрации по Карелии ===
 const KARELIA_KEYWORDS = [
-  'карелия', 'кarelia', 'петрозаводск', 'кондопога', 'сортавала', 'кемь',
-  'беломорск', 'лоухи', 'медвежьегорск', 'сегежа', 'питкяранта', 'суоярви',
-  'олонец', 'пряжа', 'пудож', 'лахденпохья', 'республика карелия'
+  'карелия', 'петрозаводск', 'кондопога', 'сортавала', 'кемь',
+  'беломорск', 'лоухи', 'медвежьегорск', 'сегежа', 'питкяранта',
+  'суоярви', 'олонец', 'пряжа', 'пудож', 'лахденпохья', 'республика карелия'
 ];
 
 const CITY_COORDS = {
@@ -43,63 +51,94 @@ const CITY_COORDS = {
 
 const MAX_NEWS_AGE = 7 * 24 * 60 * 60 * 1000;
 
-// Простое извлечение города (без улиц — слишком ненадёжно)
-function extractCity(text) {
-  const lower = text.toLowerCase();
-  for (const [city, coords] of Object.entries(CITY_COORDS)) {
-    if (lower.includes(city.toLowerCase())) {
-      return city;
-    }
-  }
-  return 'Петрозаводск'; // fallback
-}
+// === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 
-// Проверка: относится ли новость к Карелии?
 function isKareliaRelevant(text) {
   const lower = text.toLowerCase();
   return KARELIA_KEYWORDS.some(kw => lower.includes(kw));
 }
 
-// Классификация (упрощённая, без AI — для надёжности)
+function extractCity(text) {
+  const lower = text.toLowerCase();
+  for (const city of Object.keys(CITY_COORDS)) {
+    if (lower.includes(city.toLowerCase())) return city;
+  }
+  return 'Петрозаводск';
+}
+
 function classifyNews(text) {
   const lower = text.toLowerCase();
   const categories = {
-    politics: ['выборы', 'правительство', 'администрация', 'губернатор', 'депутат', 'закон', 'парламент'],
-    crime: ['задержан', 'кража', 'ДТП', 'пожар', 'преступление', 'полиция', 'суд', 'уголовное'],
-    culture: ['выставка', 'концерт', 'музей', 'фестиваль', 'театр', 'библиотека', 'кино', 'искусство'],
-    economy: ['экономика', 'бизнес', 'инвестиции', 'производство', 'завод', 'предприятие', 'торговля'],
-    sports: ['спорт', 'чемпионат', 'матч', 'турнир', 'стадион', 'футбол', 'хоккей', 'лыжи'],
-    science: ['наука', 'исследование', 'университет', 'академия', 'лаборатория', 'профессор'],
-    accidents: ['авария', 'катастрофа', 'ЧП', 'пожар', 'утечка', 'обрушение', 'аварийные'],
-    infrastructure: ['дорога', 'ремонт', 'теплотрасса', 'светофор', 'мост', 'трубопровод', 'электросети']
+    politics: ['выборы', 'правительство', 'администрация', 'губернатор', 'депутат', 'закон'],
+    crime: ['задержан', 'кража', 'ДТП', 'пожар', 'преступление', 'полиция', 'суд'],
+    culture: ['выставка', 'концерт', 'музей', 'фестиваль', 'театр', 'библиотека'],
+    economy: ['экономика', 'бизнес', 'инвестиции', 'производство', 'завод'],
+    sports: ['спорт', 'чемпионат', 'матч', 'турнир', 'стадион', 'футбол', 'хоккей'],
+    science: ['наука', 'исследование', 'университет', 'академия', 'лаборатория'],
+    accidents: ['авария', 'катастрофа', 'ЧП', 'утечка', 'обрушение'],
+    infrastructure: ['дорога', 'ремонт', 'теплотрасса', 'светофор', 'мост']
   };
-
   for (const [cat, keywords] of Object.entries(categories)) {
-    if (keywords.some(kw => lower.includes(kw))) {
-      return cat;
-    }
+    if (keywords.some(kw => lower.includes(kw))) return cat;
   }
   return 'other';
 }
 
-// Надёжный парсинг с таймаутом и повторами
-async function safeParse(url, retries = 2) {
-  const parser = new Parser({
-    timeout: 10000,
-    headers: { 'User-Agent': 'KareliaNewsBot/1.0 (+https://your-site.onrender.com)' }
-  });
-
-  for (let i = 0; i <= retries; i++) {
-    try {
-      return await parser.parseURL(url);
-    } catch (e) {
-      console.warn(`Попытка ${i + 1} не удалась для ${url}:`, e.message);
-      if (i < retries) await new Promise(r => setTimeout(r, 2000));
-    }
+// === ПАРСИНГ RSS ===
+async function parseRSS(url) {
+  const parser = new Parser({ timeout: 12000 });
+  try {
+    const feed = await parser.parseURL(url);
+    return feed.items || [];
+  } catch (e) {
+    console.warn(`⚠️ RSS парсинг не удался: ${url}`, e.message);
+    return [];
   }
-  throw new Error(`Не удалось спарсить ${url} после ${retries + 1} попыток`);
 }
 
+// === ПАРСИНГ HTML (сайты и Telegram) ===
+async function parseHTML({ url, name }) {
+  try {
+    const res = await axios.get(url, { timeout: 10000 });
+    const $ = cheerio.load(res.data);
+    const items = [];
+
+    if (name === 'ptzgovorit') {
+      $('article.news-item, .news-list-item, .post, .news-card').each((i, el) => {
+        const title = $(el).find('h1, h2, h3, a').first().text().trim();
+        const link = $(el).find('a').attr('href');
+        const desc = $(el).find('p').first().text().trim();
+        if (title && link) {
+          items.push({ title, link: link.startsWith('http') ? link : 'https://ptzgovorit.ru' + link, description: desc });
+        }
+      });
+    } else if (name === 'karelinform') {
+      $('div.news-item, article, .post, .news').each((i, el) => {
+        const title = $(el).find('h2, h3, a').first().text().trim();
+        const link = $(el).find('a').attr('href');
+        const desc = $(el).find('p').first().text().trim();
+        if (title && link) {
+          items.push({ title, link: link.startsWith('http') ? link : 'https://karelinform.ru' + link, description: desc });
+        }
+      });
+    } else if (name.includes('telegram_')) {
+      $('.tgme_widget_message').each((i, el) => {
+        const text = $(el).find('.tgme_widget_message_text').text().trim();
+        const link = $(el).find('.tgme_widget_message_date').attr('href');
+        if (text && link) {
+          items.push({ title: text.substring(0, 80) + '...', description: text, link });
+        }
+      });
+    }
+
+    return items.slice(0, 10);
+  } catch (e) {
+    console.warn(`⚠️ HTML парсинг не удался: ${url}`, e.message);
+    return [];
+  }
+}
+
+// === ОСНОВНАЯ ФУНКЦИЯ ===
 let cachedNews = [];
 let lastFetch = 0;
 
@@ -111,40 +150,67 @@ async function fetchAndProcessNews() {
 
   const allNews = [];
 
+  // 1. RSS
   for (const url of RSS_SOURCES) {
-    try {
-      console.log(`📡 Парсинг: ${url}`);
-      const feed = await safeParse(url);
-      let count = 0;
+    const items = await parseRSS(url);
+    for (const item of items) {
+      if (!item.title || !item.link) continue;
+      const fullText = (item.title + ' ' + (item.contentSnippet || item.content || '')).trim();
+      if (!isKareliaRelevant(fullText)) continue;
+      const pubDate = new Date(item.pubDate || item.isoDate || Date.now());
+      if (isNaN(pubDate.getTime()) || now - pubDate.getTime() > MAX_NEWS_AGE) continue;
+      const city = extractCity(fullText);
+      const coords = CITY_COORDS[city] || CITY_COORDS['Петрозаводск'];
+      allNews.push({
+        title: item.title.trim(),
+        description: (item.contentSnippet || item.content || '').trim(),
+        link: item.link,
+        pubDate: pubDate.toISOString(),
+        location: city,
+        lon: coords.lon,
+        lat: coords.lat,
+        category: classifyNews(fullText)
+      });
+    }
+  }
 
-      for (const item of feed.items || []) {
-        if (!item.title || !item.link) continue;
+  // 2. HTML-сайты
+  for (const source of HTML_SOURCES) {
+    const items = await parseHTML(source);
+    for (const item of items) {
+      const fullText = (item.title + ' ' + item.description).trim();
+      if (!isKareliaRelevant(fullText)) continue;
+      const city = extractCity(fullText);
+      allNews.push({
+        title: item.title,
+        description: item.description,
+        link: item.link,
+        pubDate: new Date().toISOString(),
+        location: city,
+        lon: CITY_COORDS[city]?.lon || CITY_COORDS['Петрозаводск'].lon,
+        lat: CITY_COORDS[city]?.lat || CITY_COORDS['Петрозаводск'].lat,
+        category: classifyNews(fullText)
+      });
+    }
+  }
 
-        const fullText = (item.title + ' ' + (item.contentSnippet || item.content || '')).trim();
-        if (!isKareliaRelevant(fullText)) continue;
-
-        const pubDate = new Date(item.pubDate || item.isoDate || Date.now());
-        if (isNaN(pubDate.getTime()) || now - pubDate.getTime() > MAX_NEWS_AGE) continue;
-
-        const city = extractCity(fullText);
-        const coords = CITY_COORDS[city] || CITY_COORDS['Петрозаводск'];
-
-        allNews.push({
-          title: item.title.trim(),
-          description: (item.contentSnippet || item.content || '').trim(),
-          link: item.link,
-          pubDate: pubDate.toISOString(),
-          location: city,
-          lon: coords.lon,
-          lat: coords.lat,
-          category: classifyNews(fullText)
-        });
-        count++;
-      }
-
-      console.log(`  → Найдено релевантных новостей: ${count}`);
-    } catch (e) {
-      console.error(`❌ Ошибка при обработке ${url}:`, e.message);
+  // 3. Telegram
+  for (const source of TELEGRAM_SOURCES) {
+    const items = await parseHTML({ ...source, name: `telegram_${source.name}` });
+    for (const item of items) {
+      const fullText = item.description;
+      if (!isKareliaRelevant(fullText)) continue;
+      const city = extractCity(fullText);
+      allNews.push({
+        title: item.title,
+        description: item.description,
+        link: item.link,
+        pubDate: new Date().toISOString(),
+        location: city,
+        lon: CITY_COORDS[city]?.lon || CITY_COORDS['Петрозаводск'].lon,
+        lat: CITY_COORDS[city]?.lat || CITY_COORDS['Петрозаводск'].lat,
+        category: classifyNews(fullText)
+      });
     }
   }
 
@@ -159,7 +225,7 @@ async function fetchAndProcessNews() {
 
   cachedNews = uniqueNews;
   lastFetch = now;
-  console.log(`✅ Всего уникальных новостей: ${cachedNews.length}`);
+  console.log(`✅ Загружено ${cachedNews.length} новостей`);
   return cachedNews;
 }
 
